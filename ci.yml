@@ -1,0 +1,136 @@
+##############################################################
+# HabotConnect - Task 2: Poka-Yoke (Mistake-Proofing) Build Gate
+#
+# Philosophy: "Fail-Closed". If any check is inconclusive, missing,
+# or fails, the pipeline halts and quarantines the build. We never
+# default-allow on ambiguity.
+##############################################################
+
+name: poka-yoke-build-gate
+
+on:
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------
+  # Gate 1: Formatting & Lint - blocks style drift from ever
+  # reaching review, removing human judgment from formatting.
+  # ------------------------------------------------------------
+  lint_gate:
+    name: "Gate 1 - Lint & Format (Fail-Closed)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lint tooling
+        run: pip install black==24.4.2 flake8==7.0.0
+
+      - name: Run Black (format check only, no auto-fix)
+        run: black --check --diff .
+
+      - name: Run Flake8
+        run: flake8 . --max-line-length=100 --exclude=migrations,venv
+
+      - name: Quarantine on failure
+        if: failure()
+        run: |
+          echo "::error::Gate 1 FAILED. Build quarantined. No deploy will be triggered."
+          exit 1
+
+  # ------------------------------------------------------------
+  # Gate 2: Security Scan - blocks hardcoded secrets and known
+  # vulnerable dependencies. This is the gate that would have
+  # caught the raw API credentials incident in the scenario brief.
+  # ------------------------------------------------------------
+  security_gate:
+    name: "Gate 2 - Secret & Dependency Scan (Fail-Closed)"
+    runs-on: ubuntu-latest
+    needs: lint_gate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so gitleaks can scan past commits too
+
+      - name: Scan for hardcoded secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_SUMMARY: "true"
+          GITLEAKS_EXIT_CODE: "1" # non-zero exit = fail-closed on any finding
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit (static security analysis)
+        run: pip install bandit==1.7.9
+
+      - name: Run Bandit against Django app
+        run: bandit -r ./django_app -ll -iii
+
+      - name: Install pip-audit (known CVEs in dependencies)
+        run: pip install pip-audit==2.7.3
+
+      - name: Audit dependencies
+        run: pip-audit -r requirements.txt
+
+      - name: Quarantine on failure
+        if: failure()
+        run: |
+          echo "::error::Gate 2 FAILED — secret or vulnerability detected. Build quarantined."
+          echo "::error::No artifact will be built, tagged, or handed to the deploy job."
+          exit 1
+
+  # ------------------------------------------------------------
+  # Gate 3: Schema Contract Check - validates that any serializer
+  # or schema change is backward-compatible with the Pub/Sub ->
+  # BigQuery streaming sink before merge is allowed.
+  # ------------------------------------------------------------
+  schema_gate:
+    name: "Gate 3 - Schema Contract Validation (Fail-Closed)"
+    runs-on: ubuntu-latest
+    needs: security_gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run serializer contract tests
+        run: python -m pytest django_app/tests/test_schema_contract.py -v
+
+      - name: Quarantine on failure
+        if: failure()
+        run: |
+          echo "::error::Gate 3 FAILED — schema drift detected between DRF serializer and BigQuery sink."
+          exit 1
+
+  # ------------------------------------------------------------
+  # Only reachable if ALL prior gates passed. This is the ONLY
+  # job permitted to hand off to deployment.
+  # ------------------------------------------------------------
+  build_approved:
+    name: "Build Approved - Ready for Deploy"
+    runs-on: ubuntu-latest
+    needs: [lint_gate, security_gate, schema_gate]
+    steps:
+      - name: Mark build as deployable
+        run: echo "All Poka-Yoke gates passed. Artifact is eligible for staging deploy."
