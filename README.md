@@ -1,14 +1,13 @@
-# HabotConnect — Hiring Project Submission
-**Position:** Junior Cloud & DevOps Engineer (GCP / Django / React)
-**Candidate:** [Your full name here]
-**Contact:** [Your email / phone here]
+# Secure Data Pipeline on GCP
+
+**Cloud & DevOps Project** · GCP / Terraform / Django / GitHub Actions
+
+**Author:** Pandeti Janardhana Rao
+**Contact:** janardhanrao1609@gmail.com
 
 ## Scenario Recap
 
-A junior developer pushed unencrypted API credentials to raw application code
-and caused a database schema mismatch that broke downstream analytics. This
-submission restores system integrity across three layers: infrastructure,
-pipeline enforcement, and schema validation.
+A junior developer pushed unencrypted API credentials to raw application code and caused a database schema mismatch that broke downstream analytics. This project restores system integrity across three layers: infrastructure, pipeline enforcement, and schema validation.
 
 ## Folder Layout
 
